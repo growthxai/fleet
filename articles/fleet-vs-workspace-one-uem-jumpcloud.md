@@ -1,110 +1,105 @@
-# Fleet vs. Workspace ONE UEM and JumpCloud: Choosing the right cross-platform device management
-
-Organizations managing mixed-platform environments need device management that works consistently across operating systems while providing real-time visibility and modern workflow integration. This guide covers deployment approaches, key differences, and decision criteria for IT teams evaluating [cross-platform tools](https://fleetdm.com/announcements/debunk-the-cross-platform-myth).
-
 ## Overview
 
-**Fleet** is an [open-source, cross-platform device management platform](https://fleetdm.com/) supporting macOS, Windows, Linux, ChromeOS/Chromebooks, and various cloud, data center, container, and Linux-based IoT environments. Fleet combines MDM capabilities with real-time device visibility through programmable osquery-based queries, letting your IT and security teams understand device state within seconds rather than hours. The platform supports GitOps workflows for [configuration-as-code](https://fleetdm.com/announcements/embracing-the-future-declarative-device-management), allowing you to manage device policies through version-controlled repositories. You can self-host Fleet for complete data control or deploy it as Fleet-managed cloud, giving your organization flexibility based on security and compliance requirements.
+Fleet is an open-source, multi-platform device management solution supporting macOS, Windows, Linux, ChromeOS, iOS, iPadOS, and Android. Fleet combines MDM capabilities and osquery for near real-time device visibility, letting IT and security teams understand device state within seconds rather than hours. Fleet supports GitOps workflows and offers flexible deployment options including a fully cloud-managed server instance or self-hosting. Organizations like Stripe, Dropbox, and Fastly use Fleet to manage over 2 million devices globally.
 
-**VMware Workspace ONE UEM** (now under Omnissa branding) is a cloud-based Unified Endpoint Management (UEM) platform with support for macOS, Windows, iOS, Android, and iPadOS devices. Workspace ONE UEM provides device management across onboarding, configuration, OS patching, app delivery, and support. The platform provides device monitoring and dashboards through its proprietary console. Organizations can deploy Workspace ONE UEM via cloud-based SaaS with optional hybrid capabilities through on-premises connectors.
+VMware Workspace ONE UEM (now under Omnissa branding) is a cloud-based Unified Endpoint Management (UEM) solution supporting Windows, macOS, Linux, iOS, iPadOS, Android, and ChromeOS. Additional components like Workspace ONE Intelligence and Unified Access Gateway require separate licensing.
 
-**JumpCloud** is a cloud-based directory platform focused on identity and access management (IAM) with built-in device management capabilities. JumpCloud supports Windows, macOS, and [Linux devices](https://fleetdm.com/guides/empower-linux-device-management) with features focused on Active Directory integration, user provisioning, and patch management. The platform targets small-to-medium businesses and mid-market organizations seeking centralized directory services with device management.
+JumpCloud launched in 2012 as a cloud-based directory service, adding endpoint management capabilities over time rather than building as a purpose-built MDM. JumpCloud supports Windows, Apple, and Linux devices. JumpCloud is cloud-only with no self-hosting option.
 
 ## Key differences
 
 | Attribute | Fleet | Workspace ONE UEM | JumpCloud |
-|-----------|-------|-------------------|-----------|
-| Architecture | Open-source, cross-platform MDM with osquery | Cloud-native UEM platform with hybrid connectors | Cloud-only, agent-based directory with MDM |
-| Platform support | macOS, iOS, iPadOS, Windows, Linux, ChromeOS, Android | iOS, Android, macOS, Windows; plus specialty devices (rugged/scanners/printers) | Windows, macOS, Linux |
-| Deployment model | Self-hosted or Fleet-managed cloud | Cloud-based core (SaaS) with optional on-premises/hybrid connectors | Cloud-only (directory-as-a-service) |
-| Key management features | GitOps workflows, programmable queries, real-time visibility, [MDM migration](https://fleetdm.com/guides/mdm-migration), file integrity monitoring, scope transparency | Zero-touch provisioning, app lifecycle, patching, self-service catalog, compliance checks | Active Directory integration, patch management, device monitoring, provisioning |
-| Device onboarding | MDM enrollment, migration from existing MDM tools | Zero-touch, auto-enrollment, QR/barcode, bulk sideload, Intelligent Hub | Agent-based deployment |
-| Data export & APIs | REST API, GitOps integration, programmatic queries, flexible data export | Customizable console exports, deep integration APIs, Workspace ONE Intelligence analytics | API for provisioning and access |
-| Source code | Open-source (source available) | Proprietary (Omnissa/VMware) | Proprietary cloud platform |
-| Security approach | osquery-based visibility, real-time vulnerability detection, policy enforcement, file integrity monitoring, incident response capabilities | Zero-trust architecture with posture-based access, conditional access, threat defense | Secure access via directory controls and device security |
-| Target market | Organizations of all sizes seeking transparency and programmable device management | Mid-to-large enterprises with hybrid workforces and diverse [device fleets](https://fleetdm.com/device-management) | SMBs and mid-market organizations |
+| --- | --- | --- | --- |
+| **Platform support** | macOS, iOS, iPadOS, Windows, Linux, ChromeOS, Android | Windows, macOS, Linux, iOS, iPadOS, Android, ChromeOS | Windows, macOS, Linux, iOS |
+| **Deployment model** | Self-hosted or Fleet managed cloud | SaaS and on-premises deployment options (depending on edition) | Cloud-only |
+| **GitOps support** | Native GitOps workflows for policies and configuration | Possible via APIs/automation; not a native GitOps workflow | Possible via APIs/automation; not a native GitOps workflow |
+| **Device visibility speed** | Near real-time reporting via osquery | Agent/MDM check-in and event-based reporting (cadence configurable) | Agent check-in-based reporting (cadence configurable) |
+| **Configuration verification** | Reports and policies verify observed device state via osquery | Compliance engine evaluates devices against configured rules | Agent reports and compares device state to configured policies |
+| **Vulnerability management** | Built-in vulnerability detection for installed software (with sources such as NVD/KEV/EPSS); optional custom detections (for example, with YARA) | Patch management and vulnerability/compliance reporting (feature availability varies by module/licensing) | Software inventory and patch management with reporting (feature availability varies by plan) |
+| **Compliance frameworks** | Prebuilt benchmark-aligned policies (for example, CIS) plus customizable policies and reporting | Policy-based compliance checks and reporting | Policy-based compliance checks and reporting |
+| **File integrity monitoring** | Available (Fleet Premium) | Typically via additional products or integrations | Not a core feature |
+| **Workflow integrations** | Webhooks for Jira, Zendesk, Tines, Okta Workflows, Slack | APIs and console-based workflows/integrations (some via add-ons) | APIs and directory-based integrations |
+| **Security approach** | osquery-based visibility, vulnerability detection, and incident response workflows | Compliance, configuration, and access controls across endpoints | Directory-centric identity/device controls with endpoint management |
 
 ## Device management workflow comparisons
 
 ### Enrollment and provisioning
 
-Fleet provides flexible device enrollment with MDM capabilities across all supported platforms. If you're migrating from an existing MDM tool, Fleet's MDM migration feature lets you transition devices without requiring device re-enrollment or end-user disruption.
+Fleet provides flexible device enrollment with MDM capabilities across all supported platforms. If you're migrating from an existing MDM, Fleet's end user migration feature allows devices to be easily migrated with straightforward and minimal end user interaction. Fleet is fully compatible with Apple's Managed Device Migration framework and can automatically migrate Windows devices that are MDM enrolled in any management solution.
 
-Both Fleet and Workspace ONE UEM support flexible enrollment options including zero-touch provisioning and automated enrollment across their supported platforms. JumpCloud uses an agent-based deployment model for device enrollment, reflecting its cloud-only directory-as-a-service architecture focused on centralized provisioning and access control.
+Both Fleet and Workspace ONE UEM support zero-touch provisioning and automated enrollment. JumpCloud supports enrollment across Windows, macOS, and Linux devices.
 
 ### Configuration management
 
-Both Fleet and Workspace ONE UEM support dynamic device configuration and policy management. Fleet manages device configuration through Teams and Labels for organizing devices, and Configuration Profiles for applying settings across device groups. Fleet's osquery-based queries provide real-time visibility into device state, allowing your IT team to verify configuration compliance within seconds. Host vitals display detailed device information including hardware details, installed software, and security posture.
+When a new security configuration needs to roll out across thousands of devices, configuration management determines how quickly and reliably that change happens.
 
-Fleet's GitOps workflow support lets your team manage device configurations as code, storing policies in version-controlled repositories. This approach provides audit trails, allows peer review of configuration changes, and lets you roll back changes when needed. This brings software development best practices to device management.
+Fleet manages device configuration through Fleets and Labels for organizing devices, and Configuration Profiles for applying settings across device groups. Fleet supports Apple’s MDM protocol and Declarative Device Management (DDM) for macOS, iOS, and iPadOS. Fleet is built on osquery. The [Fleetosqueryschema](https://fleetdm.com/tables/account_policy_data) has more than 300 data tables letting your IT team collect detailed device data to verify configuration compliance within seconds. Fleet's GitOps support lets your team manage device configurations as code. By integrating Fleet with a git repository, teams can store configuration profiles and policies in version control with audit trails and the ability to roll back changes.
 
-Workspace ONE UEM provides dynamic policies and configuration management through its console, with features for automated patching across OS, drivers, and firmware. JumpCloud offers device configuration through its directory-based approach with Active Directory integration.
+Workspace ONE UEM manages configuration through Smart Groups, which target devices based on criteria like device type, operating system, user group, or custom attributes. Freestyle Orchestrator provides a visual interface for building multi-step workflows. Workspace ONE also supports script execution.
+
+JumpCloud manages configuration through policies applied to individual devices, device groups, or entire fleets. JumpCloud supports custom scripts in Bash, PowerShell, or Python for configuration tasks.
 
 ### Software management
 
-Fleet provides software management through Fleet-maintained apps, custom package uploads, and Apps and Books (VPP) distribution for volume purchasing from App Stores. Fleet Desktop offers self-service application installation, letting your end users install approved software without IT intervention.
+Fleet provides software management through Fleet-maintained apps, custom package uploads, Apple Apps and Books (VPP) distribution for volume purchasing and App Stores. Fleet Desktop offers self-service application installation, letting end users install approved software without IT intervention.
 
-Both Fleet and Workspace ONE UEM support self-service application installation for end users. Workspace ONE delivers applications through Intelligent Hub, while Fleet provides self-service through Fleet Desktop. Both platforms support enterprise application distribution and management.
-
-Fleet supports [automation](https://fleetdm.com/announcements/introducing-cross-platform-script-execution) through programmable queries, GitOps workflows, and API integrations. Workspace ONE UEM and JumpCloud also provide automation through their respective platforms, including dynamic policies, automated patching, and centralized provisioning.
-
-[Explore Fleet's software management capabilities →](https://fleetdm.com/software)
+Workspace ONE UEM and JumpCloud also provide software distribution and patch management. Fleet differentiates with programmable automation through reports and API integrations that let organizations build custom deployment workflows. All three solutions can be integrated with [Munki](https://www.munki.org/munki/).
 
 ### Security and compliance
 
-Fleet uses osquery to provide real-time visibility, letting your security team query device state across your entire fleet within seconds. This sub-30-second reporting capability allows rapid detection of security issues including vulnerable software versions, misconfigurations, and policy violations. Fleet's programmable queries can detect CVEs, verify encryption status, check for unauthorized software, and assess overall security posture.
+Fleet uses osquery to provide near real-time visibility, letting your security team query device state across your entire fleet within seconds. Fleet includes vulnerability detection as a built-in capability, and custom reports can check encryption status, identify unauthorized software, and assess overall security posture. For threat detection, Fleet supports YARA rules for custom indicators of compromise.
 
-Fleet also provides file integrity monitoring, scope transparency for end-users, and incident response capabilities as part of the core platform. These are features that Workspace ONE UEM and JumpCloud either don't offer or require additional products to achieve.
+Fleet includes file integrity monitoring, scope transparency for end-users, and incident response capabilities in the core product. Fleet’s open-source codebase lets your security team audit exactly what's running on your devices.
 
-Fleet integrates with SIEM platforms and security workflows through its REST API, allowing automated incident response and compliance reporting. As an open-source platform, Fleet provides source code visibility, letting your security team audit the agent running on your devices.
-
-Both Fleet and Workspace ONE UEM provide compliance checks and policy enforcement capabilities. Fleet's osquery foundation allows real-time compliance verification and security posture assessment across all platforms. JumpCloud emphasizes secure access through directory controls and device security monitoring with a focus on centralized identity and access management.
-
-[See how Fleet handles security and compliance →](https://fleetdm.com/security)
+Workspace ONE UEM provides a compliance engine that evaluates devices against configurable rules including passcode requirements, app blocklists, and encryption status. Non-compliant devices can be blocked from corporate resources. Both the JumpCloud and Workspace ONE codebases are proprietary and can't be inspected. JumpCloud provides conditional access policies that control access based on user identity, device trust, and network location.
 
 ### API and integration capabilities
 
-Fleet provides a REST API that gives you programmatic access to all device data and management functions. The API supports GitOps workflows, allowing your team to manage Fleet configuration through tools like Terraform or custom CI/CD pipelines. Fleet's programmatic query capabilities let you build custom integrations with ticketing systems, SIEM platforms, and automation tools. Data export is available in multiple formats for reporting and compliance documentation.
+API capabilities determine what's possible when your security team needs to automatically create a Jira ticket for every device with an unpatched vulnerability, or your compliance team wants vulnerability data flowing into Snowflake for reporting.
 
-Workspace ONE UEM supports hybrid cloud-to-on-premises integration through optional components: AirWatch Cloud Connector integrates with internal Active Directory, email, and Syslog systems; Unified Access Gateway (UAG) allows secure access to on-premises resources like web servers. Workspace ONE Intelligence provides additional analytics capabilities. Fleet provides equivalent real-time analytics through osquery-based queries and API integrations, with the advantage of source code transparency.
+Fleet provides a REST API with programmatic access to all device data and management functions. Data exports to SIEM and analytics tools like Snowflake, Splunk, Elastic, and SumoLogic, while webhooks connect to Jira, Zendesk, Tines, Okta Workflows, and Slack. Fleet's open-source codebase lets your team inspect and extend API behavior.
 
-JumpCloud supports API access for provisioning and directory operations. Both Workspace ONE and JumpCloud are proprietary platforms with closed-source codebases. Fleet's open-source model provides source code transparency while offering enterprise features and support.
+Workspace ONE UEM provides REST APIs organized into sections for mobile applications, mobile device management, and system administration. APIs support OAuth 2.0 and Basic authentication.
 
-### Pricing and licensing
+JumpCloud provides REST APIs for managing users, devices, groups, and directory services. A PowerShell module is available for scripting common administrative tasks.
 
-Fleet offers transparent pricing with options for self-hosted deployment (free open-source) and Fleet-managed cloud with enterprise support. Per-device pricing is available for organizations of all sizes, without requiring enterprise minimums or complex tier negotiations.
+## Pricing and licensing
+
+All Fleet products are open source. Fleet Free is free to use and can be self-hosted. Fleet Premium has more features and includes enterprise support, and it can be self-hosted or fully managed by Fleet in the cloud for you (a minimum of 700 devices is required to qualify for Fleet-managed cloud.) [Community support](https://fleetdm.com/support) is available for free in the public channels Fleet monitors. Per-device pricing is available for organizations of all sizes.
 
 VMware Workspace ONE UEM uses a tiered SaaS licensing model with options including UEM Essentials, Desktop Essentials, and Mobile Essentials. Enterprise deployments typically require custom pricing with potential add-ons for features like Intelligence and Unified Access Gateway.
 
-JumpCloud uses per-user pricing tiers for its products, including device management. Both Fleet and JumpCloud offer entry-level options for smaller organizations. You should verify current pricing directly with each vendor, as structures change over time.
+JumpCloud uses per-user pricing tiers for its products, including device management. Both Fleet and JumpCloud offer entry-level options for smaller organizations.
 
-## Open-source cross-platform device management
+Verify current pricing directly with each vendor, as structures change over time.
 
-If you're looking for a device management platform that gives you complete visibility across macOS, Windows, Linux, and mobile devices, Fleet offers the transparency and flexibility that proprietary tools can't match.
+## Open-source multi-platform device management
 
-Fleet combines MDM capabilities with osquery-based real-time queries, letting your team see device state in seconds rather than hours. You can self-host for complete data control or use Fleet-managed cloud. [Schedule a demo](https://fleetdm.com/demo) to see how Fleet fits your cross-platform device management needs.
+Organizations searching for the best MDM for Windows, Mac, and Linux environments often find that proprietary tools force trade-offs between platform coverage, visibility speed, and deployment flexibility. Fleet offers multi-platform management with complete source code transparency and the option to self-host for complete data control.
 
-## FAQ
+Fleet combines MDM capabilities with osquery-based reports across 300+ data tables, letting your team see device state in seconds rather than hours. Companies like Stripe have consolidated multiple device management tools onto Fleet for unified multi-platform visibility. [Schedule a demo](https://fleetdm.com/demo) to see how Fleet fits your multi-platform device management needs.
 
-### What's the main difference between open-source device management and traditional UEM platforms?
+## Frequently asked questions
 
-Open-source device management platforms provide source code transparency, letting your team audit exactly what's running on your devices. Traditional UEM platforms are proprietary, meaning you can't verify how they collect data or enforce policies. Open-source tools also typically offer more deployment flexibility, including self-hosting options that proprietary platforms don't provide.
+### What's the main difference between open-source device management and traditional UEM?
+
+Open-source device management provides source code transparency, letting your team audit exactly what's running on your devices. Traditional UEM products are proprietary, meaning you can't verify how they collect data or enforce configurations. 
 
 ### How does device reporting speed affect security operations?
 
-Sub-30-second device reporting lets your security team detect and respond to threats significantly faster than platforms with hourly or daily check-in intervals. When a vulnerability is disclosed, you can query your entire fleet to identify affected devices within seconds rather than waiting for the next scheduled sync. This rapid visibility is critical for incident response, compliance verification, and security audits.
+Near real-time reporting lets your security team detect and respond to threats significantly faster than products with hourly or daily check-in intervals. When a vulnerability is disclosed, you can query your entire fleet to identify affected devices within seconds rather than waiting for the next scheduled sync. This rapid visibility is critical for incident response, compliance verification, and security audits.
 
-### What are the self-hosting options for cross-platform device management?
+### What is self-hosting?
 
-Self-hosting gives your organization complete data sovereignty and network isolation, which is particularly valuable if you have strict compliance requirements or air-gapped environments. Most traditional UEM platforms operate primarily as cloud services with limited on-premises options. JumpCloud is cloud-only with no self-hosting option. If your organization requires self-hosting and data sovereignty, you'll want to evaluate platforms that support full on-premises deployment.
+Self-hosting gives your organization complete data sovereignty and network isolation, which is particularly valuable if you have strict compliance requirements or air-gapped environments. Most traditional UEM products operate primarily as cloud services with limited on-premises options. JumpCloud is cloud-only with no self-hosting option. If your organization requires self-hosting and data sovereignty, evaluate the best [mdm solutions](https://fleetdm.com/docs/deploy/deploy-fleet) for Windows, Linux, and Mac that support full on-premises deployment.
 
 ### How long does it take to migrate from an existing device management tool?
 
-Implementation and migration timelines vary based on fleet size and organizational requirements. Many platforms now offer MDM migration features that let devices transition without requiring end-user action or device re-enrollment. Organizations typically complete pilot deployments within days and can scale to full fleet migration over weeks depending on change management processes. Fleet's MDM migration capabilities simplify the switch from legacy platforms. [Schedule a demo with Fleet](https://fleetdm.com/demo) to discuss specific implementation timelines and migration strategies for your environment.
+Implementation and migration timelines vary based on fleet size and organizational requirements. The best MDM solutions now offer migration features that let devices transition with minimal or no end-user action or device re-enrollment. Organizations typically complete pilot deployments within days and can scale to full fleet migration over weeks depending on change management processes. Fleet's MDM migration capabilities simplify the switch from legacy tools. [Schedule a demo](https://fleetdm.com/demo) with Fleet to discuss specific implementation timelines and migration strategies for your environment.
 
-<meta name="articleTitle" value="Fleet vs. Workspace ONE UEM & JumpCloud: MDM Comparison 2026">
-<meta name="authorFullName" value="GrowthX Team">
-<meta name="authorGitHubUsername" value="GrowthX-Team">
+<meta name="articleTitle" value="What's the best MDM for Windows, Mac, and Linux in 2026?">
+<meta name="authorFullName" value="Brock Walters">
+<meta name="authorGitHubUsername" value="nonpunctual">
 <meta name="category" value="articles">
-<meta name="publishedOn" value="2026-02-26">
-<meta name="description" value="Compare Fleet's cross-platform device management with VMware Workspace ONE UEM and JumpCloud. GitOps workflows, real-time visibility, and unified platform capabilities.">
+<meta name="publishedOn" value="2026-03-17">
+<meta name="description" value="Compare Fleet, Workspace ONE UEM, and JumpCloud for multi-platform device management. See which MDM offers the best visibility, GitOps, and APIs.">
