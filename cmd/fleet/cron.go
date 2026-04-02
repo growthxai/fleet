@@ -23,6 +23,7 @@ import (
 	"github.com/fleetdm/fleet/v4/server/dev_mode"
 	"github.com/fleetdm/fleet/v4/server/fleet"
 	"github.com/fleetdm/fleet/v4/server/mdm"
+	acme_api "github.com/fleetdm/fleet/v4/server/mdm/acme/api"
 	"github.com/fleetdm/fleet/v4/server/mdm/android"
 	android_svc "github.com/fleetdm/fleet/v4/server/mdm/android/service"
 	apple_mdm "github.com/fleetdm/fleet/v4/server/mdm/apple"
@@ -957,6 +958,7 @@ func newCleanupsAndAggregationSchedule(
 	softwareTitleIconStore fleet.SoftwareTitleIconStore,
 	androidSvc android.Service,
 	activitySvc activity_api.Service,
+	acmeSvc acme_api.Service,
 ) (*schedule.Schedule, error) {
 	const (
 		name            = string(fleet.CronCleanupsThenAggregation)
@@ -1093,7 +1095,7 @@ func newCleanupsAndAggregationSchedule(
 		schedule.WithJob(
 			"renew_scep_certificates",
 			func(ctx context.Context) error {
-				return service.RenewSCEPCertificates(ctx, logger, ds, config, commander)
+				return service.RenewSCEPCertificates(ctx, logger, ds, config, commander, acmeSvc)
 			},
 		),
 		schedule.WithJob("renew_host_mdm_managed_certificates", func(ctx context.Context) error {
@@ -1204,6 +1206,9 @@ func newCleanupsAndAggregationSchedule(
 				logger.InfoContext(ctx, "reverted stale certificate templates", "count", affected)
 			}
 			return nil
+		}),
+		schedule.WithJob("cleanup_orphaned_nano_refetch_commands", func(ctx context.Context) error {
+			return ds.CleanupOrphanedNanoRefetchCommands(ctx)
 		}),
 	)
 
@@ -1462,6 +1467,7 @@ func newAppleMDMProfileManagerSchedule(
 	instanceID string,
 	ds fleet.Datastore,
 	commander *apple_mdm.MDMAppleCommander,
+	redisKeyValue fleet.AdvancedKeyValueStore,
 	logger *slog.Logger,
 	certProfilesLimit int,
 ) (*schedule.Schedule, error) {
@@ -1478,7 +1484,7 @@ func newAppleMDMProfileManagerSchedule(
 		ctx, name, instanceID, defaultInterval, ds, ds,
 		schedule.WithLogger(logger),
 		schedule.WithJob("manage_apple_profiles", func(ctx context.Context) error {
-			return service.ReconcileAppleProfiles(ctx, ds, commander, logger, certProfilesLimit)
+			return service.ReconcileAppleProfiles(ctx, ds, commander, redisKeyValue, logger, certProfilesLimit)
 		}),
 		schedule.WithJob("manage_apple_declarations", func(ctx context.Context) error {
 			return service.ReconcileAppleDeclarations(ctx, ds, commander, logger)
@@ -2034,6 +2040,7 @@ func newRecoveryLockPasswordSchedule(
 	ds fleet.Datastore,
 	commander *apple_mdm.MDMAppleCommander,
 	logger *slog.Logger,
+	newActivityFn fleet.NewActivityFunc,
 ) (*schedule.Schedule, error) {
 	const (
 		name            = string(fleet.CronSendRecoveryLockCommands)
@@ -2045,7 +2052,7 @@ func newRecoveryLockPasswordSchedule(
 		ctx, name, instanceID, defaultInterval, ds, ds,
 		schedule.WithLogger(logger),
 		schedule.WithJob("send_recovery_lock_commands", func(ctx context.Context) error {
-			return apple_mdm.SendRecoveryLockCommands(ctx, ds, commander, logger)
+			return apple_mdm.SendRecoveryLockCommands(ctx, ds, commander, logger, newActivityFn)
 		}),
 	)
 

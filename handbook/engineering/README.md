@@ -269,7 +269,7 @@ We track these in a shared [Google Doc](https://docs.google.com/document/d/1jr8w
 - Existing tests to update
 
 Once coverage is agreed on, Fleet QA submits the request via [QA Wolf’s Coverage Request form](https://app.qawolf.com/fleet/coverage-requests). The most recent sprints are prioritized first.
-This workflow lets QA Wolf focus on test implementation while Fleet QA stays accountable for identifying clear, high-value test needs
+This workflow lets QA Wolf focus on test implementation while Fleet QA stays accountable for identifying clear, high-value test needs.
 
 
 ### Prepare Fleet release
@@ -353,7 +353,7 @@ Some of our code does not go through a scheduled release process and is released
 In these cases there are two differences in our pull request process:
 
 - QA is done before merging the code change to the main branch.
-- Tickets are not moved to "Ready for release". Bug are closed, and user stories are moved to the product drafting board's "Confirm and celebrate" column.
+- Tickets are not moved to "Ready for release". Bugs are closed, and user stories are moved to the product drafting board's "Confirm and celebrate" column.
 
 
 ### Notify stakeholders when a user story is pushed to the next release

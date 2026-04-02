@@ -102,7 +102,7 @@ func TestMDMApple(t *testing.T) {
 		{"AggregateMacOSSettingsAllPlatforms", testAggregateMacOSSettingsAllPlatforms},
 		{"GetMDMAppleEnrolledDeviceDeletedFromFleet", testGetMDMAppleEnrolledDeviceDeletedFromFleet},
 		{"SetMDMAppleProfilesWithVariables", testSetMDMAppleProfilesWithVariables},
-		{"GetNanoMDMEnrollmentTimes", testGetNanoMDMEnrollmentTimes},
+		{"GetNanoMDMEnrollmentDetails", testGetNanoMDMEnrollmentDetails},
 		{"GetNanoMDMUserEnrollment", testGetNanoMDMUserEnrollment},
 		{"TestDeleteMDMAppleDeclarationWithPendingInstalls", testDeleteMDMAppleDeclarationWithPendingInstalls},
 		{"TestUpdateNanoMDMUserEnrollmentUsername", testUpdateNanoMDMUserEnrollmentUsername},
@@ -123,6 +123,9 @@ func TestMDMApple(t *testing.T) {
 		{"GetHostRecoveryLockPasswordStatus", testGetHostRecoveryLockPasswordStatus},
 		{"ClaimHostsForRecoveryLockClear", testClaimHostsForRecoveryLockClear},
 		{"RecoveryLockRotation", testRecoveryLockRotation},
+		{"CleanupStaleNanoRefetchCommands", testCleanupStaleNanoRefetchCommands},
+		{"CleanupOrphanedNanoRefetchCommands", testCleanupOrphanedNanoRefetchCommands},
+		{"RecoveryLockAutoRotation", testRecoveryLockAutoRotation},
 	}
 
 	for _, c := range cases {
@@ -5417,10 +5420,10 @@ func testMDMAppleResetEnrollment(t *testing.T, ds *Datastore) {
 	require.NoError(t, err)
 	// add a record of the host DEP assignment
 	_, err = ds.writer(ctx).Exec(`
-		INSERT INTO host_dep_assignments (host_id)
-		VALUES (?)
+		INSERT INTO host_dep_assignments (host_id, hardware_serial)
+		VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE added_at = CURRENT_TIMESTAMP, deleted_at = NULL
-	`, host.ID)
+	`, host.ID, host.HardwareSerial)
 	require.NoError(t, err)
 	cmd, err := ds.GetHostBootstrapPackageCommand(ctx, host.UUID)
 	require.NoError(t, err)
@@ -5499,7 +5502,7 @@ func testMDMAppleDeleteHostDEPAssignments(t *testing.T, ds *Datastore) {
 			ExecAdhocSQL(t, ds, func(q sqlx.ExtContext) error {
 				return sqlx.SelectContext(
 					ctx, q, &got,
-					`SELECT hardware_serial FROM hosts h
+					`SELECT h.hardware_serial FROM hosts h
                                          JOIN host_dep_assignments hda ON hda.host_id = h.id
                                          WHERE hda.deleted_at IS NULL`,
 				)
@@ -5573,6 +5576,21 @@ func testLockUnlockWipeMacOS(t *testing.T, ds *Datastore) {
 	status, err = ds.GetHostLockWipeStatus(ctx, host)
 	require.NoError(t, err)
 	checkLockWipeState(t, status, false, true, false, false, false, false)
+
+	err = ds.CleanAppleMDMLock(ctx, host.UUID)
+	require.NoError(t, err)
+	status, err = ds.GetHostLockWipeStatus(ctx, host)
+	require.NoError(t, err)
+	checkLockWipeState(t, status, false, true, false, false, false, false)
+
+	// backdate unlock_ref to simulate the device having been locked for more than 5 minutes
+	ExecAdhocSQL(t, ds, func(q sqlx.ExtContext) error {
+		_, err := q.ExecContext(ctx,
+			fmt.Sprintf(`UPDATE host_mdm_actions hma JOIN hosts h ON hma.host_id = h.id
+			SET hma.unlock_ref = DATE_FORMAT(UTC_TIMESTAMP() - INTERVAL %d MINUTE, '%%Y-%%m-%%d %%H:%%i:%%s')
+			WHERE h.uuid = ?`, MDMLockCleanupMinutes+1), host.UUID)
+		return err
+	})
 
 	// execute CleanAppleMDMLock to simulate successful unlock
 	err = ds.CleanAppleMDMLock(ctx, host.UUID)
@@ -9072,7 +9090,7 @@ func testAppleMDMSetBatchAsyncLastSeenAt(t *testing.T, ds *Datastore) {
 	require.True(t, ts2b.After(ts2))
 }
 
-func testGetNanoMDMEnrollmentTimes(t *testing.T, ds *Datastore) {
+func testGetNanoMDMEnrollmentDetails(t *testing.T, ds *Datastore) {
 	ctx := t.Context()
 	host, err := ds.NewHost(ctx, &fleet.Host{
 		Hostname:      "test-host1-name",
@@ -9084,7 +9102,7 @@ func testGetNanoMDMEnrollmentTimes(t *testing.T, ds *Datastore) {
 	})
 	require.NoError(t, err)
 
-	lastMDMEnrolledAt, lastMDMSeenAt, err := ds.GetNanoMDMEnrollmentTimes(ctx, host.UUID)
+	lastMDMEnrolledAt, lastMDMSeenAt, _, err := ds.GetNanoMDMEnrollmentDetails(ctx, host.UUID)
 	require.NoError(t, err)
 	require.Nil(t, lastMDMEnrolledAt)
 	require.Nil(t, lastMDMSeenAt)
@@ -9093,7 +9111,7 @@ func testGetNanoMDMEnrollmentTimes(t *testing.T, ds *Datastore) {
 	// returned yet
 	nanoEnroll(t, ds, host, true)
 
-	lastMDMEnrolledAt, lastMDMSeenAt, err = ds.GetNanoMDMEnrollmentTimes(ctx, host.UUID)
+	lastMDMEnrolledAt, lastMDMSeenAt, _, err = ds.GetNanoMDMEnrollmentDetails(ctx, host.UUID)
 	require.NoError(t, err)
 	require.NotNil(t, lastMDMEnrolledAt) // defaults to current time on creation
 	require.NotNil(t, lastMDMSeenAt)     // defaults to time 0 value
@@ -9110,7 +9128,7 @@ func testGetNanoMDMEnrollmentTimes(t *testing.T, ds *Datastore) {
 	require.NoError(t, err)
 	nanoEnrollUserDevice(t, ds, byodHost)
 
-	lastMDMEnrolledAt, lastMDMSeenAt, err = ds.GetNanoMDMEnrollmentTimes(ctx, byodHost.UUID)
+	lastMDMEnrolledAt, lastMDMSeenAt, _, err = ds.GetNanoMDMEnrollmentDetails(ctx, byodHost.UUID)
 	require.NoError(t, err)
 	require.NotNil(t, lastMDMEnrolledAt) // defaults to current time on creation
 	require.NotNil(t, lastMDMSeenAt)     // defaults to time 0 value
@@ -9146,14 +9164,14 @@ func testGetNanoMDMEnrollmentTimes(t *testing.T, ds *Datastore) {
 		return nil
 	})
 
-	lastMDMEnrolledAt, lastMDMSeenAt, err = ds.GetNanoMDMEnrollmentTimes(ctx, host.UUID)
+	lastMDMEnrolledAt, lastMDMSeenAt, _, err = ds.GetNanoMDMEnrollmentDetails(ctx, host.UUID)
 	require.NoError(t, err)
 	require.NotNil(t, lastMDMEnrolledAt)
 	assert.Equal(t, authenticateTime, *lastMDMEnrolledAt)
 	require.NotNil(t, lastMDMSeenAt)
 	assert.Equal(t, deviceEnrollTime, *lastMDMSeenAt)
 
-	lastMDMEnrolledAt, lastMDMSeenAt, err = ds.GetNanoMDMEnrollmentTimes(ctx, byodHost.UUID)
+	lastMDMEnrolledAt, lastMDMSeenAt, _, err = ds.GetNanoMDMEnrollmentDetails(ctx, byodHost.UUID)
 	require.NoError(t, err)
 	require.NotNil(t, lastMDMEnrolledAt)
 	assert.Equal(t, byodDeviceAuthenticateTime, *lastMDMEnrolledAt)
@@ -9184,7 +9202,7 @@ func testGetNanoMDMUserEnrollment(t *testing.T, ds *Datastore) {
 	})
 	require.NoError(t, err)
 
-	lastMDMEnrolledAt, lastMDMSeenAt, err := ds.GetNanoMDMEnrollmentTimes(ctx, host.UUID)
+	lastMDMEnrolledAt, lastMDMSeenAt, _, err := ds.GetNanoMDMEnrollmentDetails(ctx, host.UUID)
 	require.NoError(t, err)
 	require.Nil(t, lastMDMEnrolledAt)
 	require.Nil(t, lastMDMSeenAt)
@@ -9906,7 +9924,7 @@ func testGetDEPAssignProfileExpiredCooldowns(t *testing.T, ds *Datastore) {
 	host := newTestHostWithPlatform(t, ds, "macos", "macos", nil)
 
 	ExecAdhocSQL(t, ds, func(q sqlx.ExtContext) error {
-		_, err := q.ExecContext(ctx, `INSERT INTO host_dep_assignments (host_id, profile_uuid) VALUES (?, ?)`, host.ID, uuid.NewString())
+		_, err := q.ExecContext(ctx, `INSERT INTO host_dep_assignments (host_id, profile_uuid, hardware_serial) VALUES (?, ?, ?)`, host.ID, uuid.NewString(), host.HardwareSerial)
 		return err
 	})
 
@@ -9936,7 +9954,7 @@ func testGetDEPAssignProfileExpiredCooldowns(t *testing.T, ds *Datastore) {
 	for i := range 200 {
 		h := newTestHostWithPlatform(t, ds, fmt.Sprintf("host-%d", i), "macos", nil)
 		ExecAdhocSQL(t, ds, func(q sqlx.ExtContext) error {
-			_, err := q.ExecContext(ctx, `INSERT INTO host_dep_assignments (host_id, profile_uuid, assign_profile_response, response_updated_at, retry_job_id) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL ? SECOND), 0)`, h.ID, uuid.NewString(), fleet.DEPAssignProfileResponseFailed, depFailedCooldownPeriod.Seconds()+10)
+			_, err := q.ExecContext(ctx, `INSERT INTO host_dep_assignments (host_id, profile_uuid, assign_profile_response, response_updated_at, retry_job_id, hardware_serial) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL ? SECOND), 0, ?)`, h.ID, uuid.NewString(), fleet.DEPAssignProfileResponseFailed, depFailedCooldownPeriod.Seconds()+10, h.HardwareSerial)
 			return err
 		})
 	}
@@ -11207,7 +11225,7 @@ func testRecoveryLockRotation(t *testing.T, ds *Datastore) {
 		// Try to initiate second rotation - should fail
 		err = ds.InitiateRecoveryLockRotation(ctx, host.UUID, "another-password")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "rotation already pending")
+		assert.ErrorIs(t, err, fleet.ErrRecoveryLockRotationPending)
 	})
 
 	t.Run("InitiateRecoveryLockRotation rejects pending status", func(t *testing.T) {
@@ -11220,7 +11238,7 @@ func testRecoveryLockRotation(t *testing.T, ds *Datastore) {
 		// Try to initiate rotation on pending status - should fail
 		err = ds.InitiateRecoveryLockRotation(ctx, host.UUID, "new-password")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not eligible for rotation")
+		assert.ErrorIs(t, err, fleet.ErrRecoveryLockNotEligible)
 	})
 
 	t.Run("InitiateRecoveryLockRotation allows failed status", func(t *testing.T) {
@@ -11388,5 +11406,424 @@ func testRecoveryLockRotation(t *testing.T, ds *Datastore) {
 		pending, err := ds.HasPendingRecoveryLockRotation(ctx, "non-existent-uuid")
 		require.NoError(t, err)
 		assert.False(t, pending)
+	})
+}
+
+func testCleanupStaleNanoRefetchCommands(t *testing.T, ds *Datastore) {
+	ctx := t.Context()
+
+	// Create a host and enroll it in nano MDM.
+	host, err := ds.NewHost(ctx, &fleet.Host{
+		Hostname:        "test-cleanup-host",
+		OsqueryHostID:   ptr.String("cleanup-osquery-id"),
+		NodeKey:         ptr.String("cleanup-node-key"),
+		UUID:            "cleanup-test-uuid",
+		Platform:        "ios",
+		DetailUpdatedAt: time.Now(),
+		LabelUpdatedAt:  time.Now(),
+		PolicyUpdatedAt: time.Now(),
+		SeenTime:        time.Now(),
+	})
+	require.NoError(t, err)
+	nanoEnroll(t, ds, host, false)
+
+	enrollmentID := host.UUID
+
+	// Helper to insert a nano command with a specific created_at.
+	insertNanoCmd := func(cmdUUID, reqType string, createdAt time.Time) {
+		_, err := ds.writer(ctx).ExecContext(ctx,
+			`INSERT INTO nano_commands (command_uuid, request_type, command, created_at) VALUES (?, ?, '<?xml', ?)`,
+			cmdUUID, reqType, createdAt)
+		require.NoError(t, err)
+	}
+
+	// Helper to insert a nano_enrollment_queue entry.
+	insertNEQ := func(id, cmdUUID string, createdAt time.Time) {
+		_, err := ds.writer(ctx).ExecContext(ctx,
+			`INSERT INTO nano_enrollment_queue (id, command_uuid, active, priority, created_at) VALUES (?, ?, 0, 0, ?)`,
+			id, cmdUUID, createdAt)
+		require.NoError(t, err)
+	}
+
+	// Helper to insert a nano_command_results entry.
+	insertNCR := func(id, cmdUUID, status string) {
+		_, err := ds.writer(ctx).ExecContext(ctx,
+			`INSERT INTO nano_command_results (id, command_uuid, status, result) VALUES (?, ?, ?, '<?xml')`,
+			id, cmdUUID, status)
+		require.NoError(t, err)
+	}
+
+	now := time.Now()
+	oldTime := now.Add(-31 * 24 * time.Hour)   // 31 days ago
+	recentTime := now.Add(-1 * 24 * time.Hour) // 1 day ago
+
+	// Create old REFETCH-APPS- command (should be cleaned up).
+	cmdUUID := "REFETCH-APPS-old-acknowledged"
+	insertNanoCmd(cmdUUID, "InstalledApplicationList", oldTime)
+	insertNEQ(enrollmentID, cmdUUID, oldTime)
+	insertNCR(enrollmentID, cmdUUID, "Acknowledged")
+
+	// Create an old REFETCH-APPS- command that has Error status (should also be cleaned up).
+	insertNanoCmd("REFETCH-APPS-old-error", "InstalledApplicationList", oldTime)
+	insertNEQ(enrollmentID, "REFETCH-APPS-old-error", oldTime)
+	insertNCR(enrollmentID, "REFETCH-APPS-old-error", "Error")
+
+	// Create an old REFETCH-APPS- command with no result (should NOT be cleaned up).
+	insertNanoCmd("REFETCH-APPS-old-noresult", "InstalledApplicationList", oldTime)
+	insertNEQ(enrollmentID, "REFETCH-APPS-old-noresult", oldTime)
+
+	// Create a recent REFETCH-APPS- command (should NOT be cleaned up).
+	insertNanoCmd("REFETCH-APPS-recent", "InstalledApplicationList", recentTime)
+	insertNEQ(enrollmentID, "REFETCH-APPS-recent", recentTime)
+	insertNCR(enrollmentID, "REFETCH-APPS-recent", "Acknowledged")
+
+	// Create old REFETCH-DEVICE- commands (different prefix, should NOT be affected by APPS cleanup).
+	insertNanoCmd("REFETCH-DEVICE-old-0", "DeviceInformation", oldTime)
+	insertNEQ(enrollmentID, "REFETCH-DEVICE-old-0", oldTime)
+	insertNCR(enrollmentID, "REFETCH-DEVICE-old-0", "Acknowledged")
+
+	// The "current" command that triggered the cleanup.
+	currentCmdUUID := "REFETCH-APPS-current"
+	insertNanoCmd(currentCmdUUID, "InstalledApplicationList", now)
+	insertNEQ(enrollmentID, currentCmdUUID, now)
+	insertNCR(enrollmentID, currentCmdUUID, "Acknowledged")
+
+	// Run cleanup for REFETCH-APPS- prefix, scoped to this enrollment.
+	err = ds.CleanupStaleNanoRefetchCommands(ctx, enrollmentID, fleet.RefetchAppsCommandUUIDPrefix, currentCmdUUID)
+	require.NoError(t, err)
+
+	// Verify: old acknowledged/errored REFETCH-APPS- entries should be deleted from neq and ncr.
+	var neqCount int
+	err = sqlx.GetContext(ctx, ds.reader(ctx), &neqCount,
+		`SELECT COUNT(*) FROM nano_enrollment_queue WHERE command_uuid LIKE 'REFETCH-APPS-old-%'`)
+	require.NoError(t, err)
+	// Only the one with no result should remain.
+	assert.Equal(t, 1, neqCount, "only the no-result entry should remain in neq")
+
+	var ncrCount int
+	err = sqlx.GetContext(ctx, ds.reader(ctx), &ncrCount,
+		`SELECT COUNT(*) FROM nano_command_results WHERE command_uuid LIKE 'REFETCH-APPS-old-%'`)
+	require.NoError(t, err)
+	assert.Equal(t, 0, ncrCount, "all old acknowledged/errored ncr entries should be deleted")
+
+	// Verify: recent command should still exist.
+	err = sqlx.GetContext(ctx, ds.reader(ctx), &neqCount,
+		`SELECT COUNT(*) FROM nano_enrollment_queue WHERE command_uuid = 'REFETCH-APPS-recent'`)
+	require.NoError(t, err)
+	assert.Equal(t, 1, neqCount, "recent command should not be deleted")
+
+	// Verify: current command should still exist.
+	err = sqlx.GetContext(ctx, ds.reader(ctx), &neqCount,
+		`SELECT COUNT(*) FROM nano_enrollment_queue WHERE command_uuid = ?`, currentCmdUUID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, neqCount, "current command should not be deleted")
+
+	// Verify: REFETCH-DEVICE- command should not be affected.
+	err = sqlx.GetContext(ctx, ds.reader(ctx), &neqCount,
+		`SELECT COUNT(*) FROM nano_enrollment_queue WHERE command_uuid = 'REFETCH-DEVICE-old-0'`)
+	require.NoError(t, err)
+	assert.Equal(t, 1, neqCount, "different prefix should not be affected")
+}
+
+func testCleanupOrphanedNanoRefetchCommands(t *testing.T, ds *Datastore) {
+	ctx := t.Context()
+
+	// Create a host and enroll it for FK constraints.
+	host, err := ds.NewHost(ctx, &fleet.Host{
+		Hostname:        "test-orphan-host",
+		OsqueryHostID:   ptr.String("orphan-osquery-id"),
+		NodeKey:         ptr.String("orphan-node-key"),
+		UUID:            "orphan-test-uuid",
+		Platform:        "ios",
+		DetailUpdatedAt: time.Now(),
+		LabelUpdatedAt:  time.Now(),
+		PolicyUpdatedAt: time.Now(),
+		SeenTime:        time.Now(),
+	})
+	require.NoError(t, err)
+	nanoEnroll(t, ds, host, false)
+
+	now := time.Now()
+	oldTime := now.Add(-31 * 24 * time.Hour)
+	recentTime := now.Add(-1 * 24 * time.Hour)
+
+	// Insert an old REFETCH command WITH a neq reference (should NOT be deleted).
+	_, err = ds.writer(ctx).ExecContext(ctx,
+		`INSERT INTO nano_commands (command_uuid, request_type, command, created_at) VALUES (?, ?, '<?xml', ?)`,
+		"REFETCH-APPS-with-ref", "InstalledApplicationList", oldTime)
+	require.NoError(t, err)
+	_, err = ds.writer(ctx).ExecContext(ctx,
+		`INSERT INTO nano_enrollment_queue (id, command_uuid, active, priority, created_at) VALUES (?, ?, 1, 0, ?)`,
+		host.UUID, "REFETCH-APPS-with-ref", oldTime)
+	require.NoError(t, err)
+
+	// Insert an old REFETCH command WITHOUT neq reference (should be deleted).
+	_, err = ds.writer(ctx).ExecContext(ctx,
+		`INSERT INTO nano_commands (command_uuid, request_type, command, created_at) VALUES (?, ?, '<?xml', ?)`,
+		"REFETCH-APPS-orphan", "InstalledApplicationList", oldTime)
+	require.NoError(t, err)
+
+	// Insert a recent REFETCH command WITHOUT neq reference (should NOT be deleted - too new).
+	_, err = ds.writer(ctx).ExecContext(ctx,
+		`INSERT INTO nano_commands (command_uuid, request_type, command, created_at) VALUES (?, ?, '<?xml', ?)`,
+		"REFETCH-APPS-recent-orphan", "InstalledApplicationList", recentTime)
+	require.NoError(t, err)
+
+	// Insert an old non-REFETCH command WITHOUT neq reference (should NOT be deleted - wrong prefix).
+	_, err = ds.writer(ctx).ExecContext(ctx,
+		`INSERT INTO nano_commands (command_uuid, request_type, command, created_at) VALUES (?, ?, '<?xml', ?)`,
+		"OTHER-CMD-orphan", "ProfileList", oldTime)
+	require.NoError(t, err)
+
+	// Run cleanup.
+	err = ds.CleanupOrphanedNanoRefetchCommands(ctx)
+	require.NoError(t, err)
+
+	// Verify: old orphaned REFETCH command should be gone.
+	var count int
+	err = sqlx.GetContext(ctx, ds.reader(ctx), &count,
+		`SELECT COUNT(*) FROM nano_commands WHERE command_uuid = 'REFETCH-APPS-orphan'`)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "old orphaned REFETCH command should be deleted")
+
+	// Verify: old REFETCH command with reference should still exist.
+	err = sqlx.GetContext(ctx, ds.reader(ctx), &count,
+		`SELECT COUNT(*) FROM nano_commands WHERE command_uuid = 'REFETCH-APPS-with-ref'`)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "REFETCH command with neq reference should not be deleted")
+
+	// Verify: recent orphaned REFETCH command should still exist.
+	err = sqlx.GetContext(ctx, ds.reader(ctx), &count,
+		`SELECT COUNT(*) FROM nano_commands WHERE command_uuid = 'REFETCH-APPS-recent-orphan'`)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "recent orphaned REFETCH command should not be deleted")
+
+	// Verify: non-REFETCH command should still exist.
+	err = sqlx.GetContext(ctx, ds.reader(ctx), &count,
+		`SELECT COUNT(*) FROM nano_commands WHERE command_uuid = 'OTHER-CMD-orphan'`)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "non-REFETCH command should not be deleted")
+}
+
+func testRecoveryLockAutoRotation(t *testing.T, ds *Datastore) {
+	ctx := t.Context()
+
+	// Helper to set up a host with a verified recovery lock password
+	setupHostWithVerifiedPassword := func(t *testing.T, name, uuid string) *fleet.Host {
+		t.Helper()
+		host := test.NewHost(t, ds, name, "2.3.4."+uuid[:3], name+"key", uuid, time.Now())
+		pw := apple_mdm.GenerateRecoveryLockPassword()
+		err := ds.SetHostsRecoveryLockPasswords(ctx, []fleet.HostRecoveryLockPasswordPayload{{HostUUID: host.UUID, Password: pw}})
+		require.NoError(t, err)
+		err = ds.SetRecoveryLockVerified(ctx, host.UUID)
+		require.NoError(t, err)
+		return host
+	}
+
+	// Helper to get auto_rotate_at directly from DB
+	getAutoRotateAt := func(t *testing.T, hostUUID string) *time.Time {
+		t.Helper()
+		var autoRotateAt *time.Time
+		err := ds.writer(ctx).GetContext(ctx, &autoRotateAt, `
+			SELECT auto_rotate_at FROM host_recovery_key_passwords
+			WHERE host_uuid = ? AND deleted = 0`, hostUUID)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		require.NoError(t, err)
+		return autoRotateAt
+	}
+
+	t.Run("MarkRecoveryLockPasswordViewed sets auto_rotate_at", func(t *testing.T) {
+		host := setupHostWithVerifiedPassword(t, "view-host1", "viewuuid0001")
+
+		// Initially no auto_rotate_at
+		autoRotateAt := getAutoRotateAt(t, host.UUID)
+		assert.Nil(t, autoRotateAt)
+
+		// Mark as viewed
+		rotateAt, err := ds.MarkRecoveryLockPasswordViewed(ctx, host.UUID)
+		require.NoError(t, err)
+		assert.False(t, rotateAt.IsZero())
+
+		// Verify auto_rotate_at is approximately 1 hour from now
+		expectedRotateAt := time.Now().Add(1 * time.Hour)
+		assert.WithinDuration(t, expectedRotateAt, rotateAt, 1*time.Minute)
+
+		// Verify via direct DB query
+		autoRotateAt = getAutoRotateAt(t, host.UUID)
+		require.NotNil(t, autoRotateAt)
+		assert.WithinDuration(t, expectedRotateAt, *autoRotateAt, 1*time.Minute)
+	})
+
+	t.Run("MarkRecoveryLockPasswordViewed updates existing auto_rotate_at", func(t *testing.T) {
+		host := setupHostWithVerifiedPassword(t, "view-host2", "viewuuid0002")
+
+		// First view
+		firstRotateAt, err := ds.MarkRecoveryLockPasswordViewed(ctx, host.UUID)
+		require.NoError(t, err)
+
+		time.Sleep(10 * time.Millisecond) // Small delay to ensure different timestamp
+
+		// Second view should update auto_rotate_at
+		secondRotateAt, err := ds.MarkRecoveryLockPasswordViewed(ctx, host.UUID)
+		require.NoError(t, err)
+
+		// Second rotation time should be after first
+		assert.True(t, secondRotateAt.After(firstRotateAt), "second view should update auto_rotate_at")
+
+		// Verify the value was persisted in the database
+		pw, err := ds.GetHostRecoveryLockPassword(ctx, host.UUID)
+		require.NoError(t, err)
+		require.NotNil(t, pw.AutoRotateAt, "auto_rotate_at should be persisted")
+		assert.True(t, pw.AutoRotateAt.After(firstRotateAt), "persisted auto_rotate_at should be after first rotation time")
+	})
+
+	t.Run("MarkRecoveryLockPasswordViewed fails for non-existent host", func(t *testing.T) {
+		_, err := ds.MarkRecoveryLockPasswordViewed(ctx, "non-existent-uuid")
+		require.Error(t, err)
+		assert.True(t, fleet.IsNotFound(err))
+	})
+
+	t.Run("MarkRecoveryLockPasswordViewed fails for remove operation", func(t *testing.T) {
+		host := setupHostWithVerifiedPassword(t, "view-host3", "viewuuid0003")
+
+		// Change to remove operation type
+		_, err := ds.writer(ctx).ExecContext(ctx, `
+			UPDATE host_recovery_key_passwords
+			SET operation_type = 'remove'
+			WHERE host_uuid = ?`, host.UUID)
+		require.NoError(t, err)
+
+		// Should fail because operation_type is not 'install'
+		_, err = ds.MarkRecoveryLockPasswordViewed(ctx, host.UUID)
+		require.Error(t, err)
+		assert.True(t, fleet.IsNotFound(err))
+	})
+
+	// Helper to check if a host UUID is in the rotation info list
+	containsHostUUID := func(hosts []fleet.HostAutoRotationInfo, uuid string) bool {
+		for _, h := range hosts {
+			if h.HostUUID == uuid {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("GetHostsForAutoRotation returns due hosts", func(t *testing.T) {
+		host := setupHostWithVerifiedPassword(t, "auto-rotate-host1", "autorotateuuid1")
+
+		// Set auto_rotate_at to 2 hours ago (past due)
+		_, err := ds.writer(ctx).ExecContext(ctx, `
+			UPDATE host_recovery_key_passwords
+			SET auto_rotate_at = DATE_SUB(NOW(6), INTERVAL 2 HOUR)
+			WHERE host_uuid = ?`, host.UUID)
+		require.NoError(t, err)
+
+		// Should be returned
+		hosts, err := ds.GetHostsForAutoRotation(ctx)
+		require.NoError(t, err)
+		assert.True(t, containsHostUUID(hosts, host.UUID), "host should be in auto-rotation list")
+	})
+
+	t.Run("GetHostsForAutoRotation excludes future auto_rotate_at", func(t *testing.T) {
+		host := setupHostWithVerifiedPassword(t, "auto-rotate-host2", "autorotateuuid2")
+
+		// Set auto_rotate_at to 1 hour in the future
+		_, err := ds.writer(ctx).ExecContext(ctx, `
+			UPDATE host_recovery_key_passwords
+			SET auto_rotate_at = DATE_ADD(NOW(6), INTERVAL 1 HOUR)
+			WHERE host_uuid = ?`, host.UUID)
+		require.NoError(t, err)
+
+		// Should NOT be returned
+		hosts, err := ds.GetHostsForAutoRotation(ctx)
+		require.NoError(t, err)
+		assert.False(t, containsHostUUID(hosts, host.UUID), "host should not be in auto-rotation list")
+	})
+
+	t.Run("GetHostsForAutoRotation excludes hosts with pending rotation", func(t *testing.T) {
+		host := setupHostWithVerifiedPassword(t, "auto-rotate-host3", "autorotateuuid3")
+
+		// Set auto_rotate_at to past due
+		_, err := ds.writer(ctx).ExecContext(ctx, `
+			UPDATE host_recovery_key_passwords
+			SET auto_rotate_at = DATE_SUB(NOW(6), INTERVAL 2 HOUR)
+			WHERE host_uuid = ?`, host.UUID)
+		require.NoError(t, err)
+
+		// Initiate rotation (sets pending_encrypted_password)
+		newPassword := apple_mdm.GenerateRecoveryLockPassword()
+		err = ds.InitiateRecoveryLockRotation(ctx, host.UUID, newPassword)
+		require.NoError(t, err)
+
+		// Should NOT be returned because pending rotation exists
+		hosts, err := ds.GetHostsForAutoRotation(ctx)
+		require.NoError(t, err)
+		assert.False(t, containsHostUUID(hosts, host.UUID), "host should not be in auto-rotation list")
+	})
+
+	t.Run("GetHostsForAutoRotation excludes non-verified hosts", func(t *testing.T) {
+		host := test.NewHost(t, ds, "auto-rotate-host4", "2.3.4.104", "autorotate4key", "autorotateuuid4", time.Now())
+		pw := apple_mdm.GenerateRecoveryLockPassword()
+		err := ds.SetHostsRecoveryLockPasswords(ctx, []fleet.HostRecoveryLockPasswordPayload{{HostUUID: host.UUID, Password: pw}})
+		require.NoError(t, err)
+		// Status is "pending" after SetHostsRecoveryLockPasswords, NOT verified
+
+		// Set auto_rotate_at to past due
+		_, err = ds.writer(ctx).ExecContext(ctx, `
+			UPDATE host_recovery_key_passwords
+			SET auto_rotate_at = DATE_SUB(NOW(6), INTERVAL 2 HOUR)
+			WHERE host_uuid = ?`, host.UUID)
+		require.NoError(t, err)
+
+		// Should NOT be returned because status is not verified
+		hosts, err := ds.GetHostsForAutoRotation(ctx)
+		require.NoError(t, err)
+		assert.False(t, containsHostUUID(hosts, host.UUID), "host should not be in auto-rotation list")
+	})
+
+	t.Run("CompleteRecoveryLockRotation clears auto_rotate_at", func(t *testing.T) {
+		host := setupHostWithVerifiedPassword(t, "complete-auto-rotate", "completeautorot")
+
+		// Mark as viewed to set auto_rotate_at
+		_, err := ds.MarkRecoveryLockPasswordViewed(ctx, host.UUID)
+		require.NoError(t, err)
+
+		// Verify auto_rotate_at is set
+		autoRotateAt := getAutoRotateAt(t, host.UUID)
+		require.NotNil(t, autoRotateAt)
+
+		// Initiate and complete rotation
+		newPassword := apple_mdm.GenerateRecoveryLockPassword()
+		err = ds.InitiateRecoveryLockRotation(ctx, host.UUID, newPassword)
+		require.NoError(t, err)
+
+		err = ds.CompleteRecoveryLockRotation(ctx, host.UUID)
+		require.NoError(t, err)
+
+		// auto_rotate_at should be cleared
+		autoRotateAt = getAutoRotateAt(t, host.UUID)
+		assert.Nil(t, autoRotateAt)
+	})
+
+	t.Run("GetHostRecoveryLockPassword includes auto_rotate_at", func(t *testing.T) {
+		host := setupHostWithVerifiedPassword(t, "get-pw-auto-rotate", "getpwautorot")
+
+		// Initially no auto_rotate_at
+		pw, err := ds.GetHostRecoveryLockPassword(ctx, host.UUID)
+		require.NoError(t, err)
+		assert.Nil(t, pw.AutoRotateAt)
+
+		// Mark as viewed
+		rotateAt, err := ds.MarkRecoveryLockPasswordViewed(ctx, host.UUID)
+		require.NoError(t, err)
+
+		// Now auto_rotate_at should be returned
+		pw, err = ds.GetHostRecoveryLockPassword(ctx, host.UUID)
+		require.NoError(t, err)
+		require.NotNil(t, pw.AutoRotateAt)
+		assert.WithinDuration(t, rotateAt, *pw.AutoRotateAt, 1*time.Second)
 	})
 }

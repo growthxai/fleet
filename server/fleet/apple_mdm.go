@@ -10,12 +10,23 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fleetdm/fleet/v4/server/mdm"
 	"github.com/fleetdm/fleet/v4/server/mdm/apple/mobileconfig"
 	"github.com/fleetdm/fleet/v4/server/mdm/nanodep/godep"
+)
+
+// Sentinel errors for recovery lock rotation
+var (
+	// ErrRecoveryLockRotationPending indicates a rotation is already in progress for the host.
+	ErrRecoveryLockRotationPending = errors.New("recovery lock rotation already pending")
+
+	// ErrRecoveryLockNotEligible indicates the host is not eligible for rotation
+	// (e.g., wrong status, operation type, or no existing password).
+	ErrRecoveryLockNotEligible = errors.New("host not eligible for recovery lock rotation")
 )
 
 type MDMAppleCommandIssuer interface {
@@ -666,6 +677,13 @@ type SCEPIdentityAssociation struct {
 	EnrollmentType string `db:"type"`
 }
 
+type DeviceInfoForACMERenewal struct {
+	HostUUID       string `db:"host_uuid"`
+	HardwareSerial string `db:"hardware_serial"`
+	HardwareModel  string `db:"hardware_model"`
+	OSVersion      string `db:"os_version"`
+}
+
 // MDMAppleDeclaration represents a DDM JSON declaration.
 type MDMAppleDeclaration struct {
 	// DeclarationUUID is the unique identifier of the declaration in
@@ -1029,6 +1047,66 @@ type MDMAppleMachineInfo struct {
 	Version                     string `plist:"VERSION"`
 }
 
+// macProductRe matches a macOS model identifier such as "MacBookPro18,3", capturing the
+// alphabetic family prefix (group 1) and the numeric major version (group 2).
+var macProductRe = regexp.MustCompile(`^([A-Za-z]+)(\d+),\d+$`)
+
+// appleSiliconMajorThreshold maps each traditional Mac product family to the first major
+// version number that corresponds to an Apple Silicon model. Any major version equal to or
+// greater than the threshold is Apple Silicon; lower versions are x86.
+var appleSiliconMajorThreshold = map[string]int{
+	// MacBookAir10,1 was the first Apple Silicon MacBook Air (M1, Late 2020).
+	"MacBookAir": 10,
+	// MacBookPro17,1 was the first Apple Silicon MacBook Pro (M1, Late 2020).
+	"MacBookPro": 17,
+	// Macmini9,1 was the first Apple Silicon Mac mini (M1, Late 2020).
+	"Macmini": 9,
+	// iMac21,1 was the first Apple Silicon iMac (M1, Early 2021).
+	"iMac": 21,
+}
+
+// IsMacAppleSilicon determines whether the device is an Apple Silicon Mac. If the model identifier
+// starts with iPhone, iPod, or iPad, it returns false with no error; however, other non-Mac Apple
+// devices like AppleTV will return an error.
+func IsMacAppleSilicon(modelIdentifier string) (bool, error) {
+	if strings.HasPrefix(modelIdentifier, "iPhone") ||
+		strings.HasPrefix(modelIdentifier, "iPod") ||
+		strings.HasPrefix(modelIdentifier, "iPad") {
+		// If the model identifier starts with iPhone, iPod, or iPad, we'll return false with no
+		// error; however, other non-Mac Apple devices like AppleTV will return an error
+		return false, nil
+	}
+
+	matches := macProductRe.FindStringSubmatch(modelIdentifier)
+	if matches == nil {
+		return false, fmt.Errorf("unrecognized product identifier format: %q", modelIdentifier)
+	}
+
+	family := matches[1]
+	major, _ := strconv.Atoi(matches[2])
+
+	// Model identifiers starting with "Mac" immediately followed by a digit (e.g. "Mac13,1")
+	// represent the unified naming scheme Apple adopted for Apple Silicon products such as the
+	// Mac Studio and the M2/M3/M4-era Mac Pro. All such identifiers are Apple Silicon.
+	if family == "Mac" {
+		return true, nil
+	}
+
+	// MacBook (no suffix), iMacPro, and MacPro were all discontinued before Apple Silicon
+	// was introduced; every model in these families is x86.
+	switch family {
+	case "MacBook", "iMacPro", "MacPro":
+		return false, nil
+	}
+
+	threshold, ok := appleSiliconMajorThreshold[family]
+	if !ok {
+		return false, fmt.Errorf("unrecognized Mac product family in identifier: %q", modelIdentifier)
+	}
+
+	return major >= threshold, nil
+}
+
 // MDMAppleAccountDrivenUserEnrollDeviceInfo is a more minimal version of DeviceInfo sent on Account
 // Driven User Enrollment requests[1] that only describes the base product attempting enrollment.
 //
@@ -1144,8 +1222,9 @@ type HostLocationData struct {
 
 // HostRecoveryLockPassword represents a recovery lock password for a host.
 type HostRecoveryLockPassword struct {
-	Password  string
-	UpdatedAt time.Time
+	Password     string
+	UpdatedAt    time.Time
+	AutoRotateAt *time.Time // When auto-rotation is scheduled (1 hour after password is viewed)
 }
 
 // HostRecoveryLockPasswordPayload contains the data needed to store a recovery lock password.
@@ -1162,4 +1241,11 @@ type HostRecoveryLockRotationStatus struct {
 	OperationType       string  // install or remove
 	HasPendingRotation  bool    // pending_encrypted_password is not null
 	PendingErrorMessage *string // error from failed rotation
+}
+
+// HostAutoRotationInfo contains the minimal host data needed for auto-rotation activity logging.
+type HostAutoRotationInfo struct {
+	HostUUID    string `db:"host_uuid"`
+	HostID      uint   `db:"host_id"`
+	DisplayName string `db:"display_name"`
 }
